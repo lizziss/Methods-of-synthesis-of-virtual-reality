@@ -1,184 +1,390 @@
-'use strict';
+"use strict";
 
-let gl;                         // The webgl context.
-let surface;                    // A surface model
-let shProgram;                  // A shader program
-let spaceball;                  // A SimpleRotator object that lets the user rotate the view by mouse.
-let stereoCam;                  // Object holding stereo camera and its parameters
+let gl;
+let surface, videoPlane, lightSphere;
+let shProgram, spaceball, stereoCam;
 
+let zoom = 50.0;
+let uMaxMultiplier = 2.4;
+let lightAngle = 0.0;
 
-// Constructor
-function ShaderProgram(name, program) {
+let videoElement, videoTexture;
+let texDiffuse, texSpecular, texNormal;
+let isCameraStarted = false;
 
-    this.name = name;
-    this.prog = program;
-
-    // Location of the attribute variable in the shader program.
-    this.iAttribVertex = -1;
-    // Location of the uniform specifying a color for the primitive.
-    this.iColor = -1;
-    // Location of the uniform matrix representing the combined transformation.
-    this.iModelViewProjectionMatrix = -1;
-
-    this.Use = function() {
-        gl.useProgram(this.prog);
-    }
+function deg2rad(angle) {
+  return (angle * Math.PI) / 180;
 }
 
+function loadTexture(url, defaultColor) {
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    1,
+    1,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    new Uint8Array(defaultColor),
+  );
 
-/* Draws a colored cube, along with a set of coordinate axes.
- * (Note that the use of the above drawPrimitive function is not an efficient
- * way to draw with WebGL.  Here, the geometry is so simple that it doesn't matter.)
- */
-function draw() { 
-    gl.clearColor(0,0,0,1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    
-    /* Set the values of the projection transformation */
-    //let projection = m4.perspective(Math.PI/8, 1, 8, 12);
-    
-    /* Get the view matrix from the SimpleRotator object.*/
-    let modelView = spaceball.getViewMatrix();
+  const image = new Image();
+  image.onload = function () {
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  };
+  image.src = url;
+  return texture;
+}
 
-    let rotateToPointZero = m4.axisRotation([0.707,0.707,0], 0.7);
-    let translateToPointZero = m4.translation(0,0,-10);
+function startWebcam() {
+  if (isCameraStarted) return;
 
-    // The FIRST PASS (for the left eye)
+  let btn = document.getElementById("btnStartCamera");
+  let checkbox = document.getElementById("showWebcamBg");
 
-    let matrLeftFrustum = stereoCam.calcLeftFrustum();
-    gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, matrLeftFrustum);
+  btn.textContent = "Starting...";
+  btn.disabled = true;
 
-    let translateLeftEye = m4. translation(stereoCam.eyeSeparation/2, 0, 0);
+  videoElement = document.getElementById("webcam");
+  videoTexture = gl.createTexture();
 
-    let matAccum0 = m4.multiply(rotateToPointZero, modelView );
-    let matAccum1 = m4.multiply(translateLeftEye, matAccum0 );
-    let matAccum2 = m4.multiply(translateToPointZero, matAccum1 );
-        
-    /* Multiply the projection matrix times the modelview matrix to give the
-       combined transformation matrix, and send that to the shader program. */
-    // let modelViewProjection = m4.multiply(projection, matAccum1 );
+  navigator.mediaDevices
+    .getUserMedia({ video: true })
+    .then((stream) => {
+      videoElement.srcObject = stream;
+      isCameraStarted = true;
+      btn.textContent = "Camera Running";
+      btn.style.backgroundColor = "#4CAF50";
+      checkbox.disabled = false;
+    })
+    .catch((err) => {
+      console.error("Camera error:", err);
+      alert("Не вдалося отримати доступ до камери.");
+      btn.textContent = "Start Web Camera";
+      btn.disabled = false;
+    });
 
-    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matAccum2 );
-    
-    gl.colorMask(true, false, false, true);
-    gl.uniform4fv(shProgram.iColor, [1,1,1,1] );
-    surface.Draw();
+  gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+}
 
-    // The SECOND PASS (for the right eye)
+function updateWebcamTexture() {
+  if (isCameraStarted && videoElement && videoElement.readyState >= 2) {
+    gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      videoElement,
+    );
+  }
+}
 
-    gl.clear(gl.DEPTH_BUFFER_BIT);
+function updateUmax(value) {
+  uMaxMultiplier = parseFloat(value);
+  document.getElementById("uMaxValue").textContent = value + "π";
+  updateSurface();
+}
+function updateUSteps(v) {
+  document.getElementById("uSliderValue").textContent = v;
+  updateSurface();
+}
+function updateVSteps(v) {
+  document.getElementById("vSliderValue").textContent = v;
+  updateSurface();
+}
 
-    let matrRightFrustum = stereoCam.calcRightFrustum();
-    gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, matrRightFrustum);
+function updateSurface() {
+  let d = CreateSurfaceData(uMaxMultiplier);
+  surface.BufferData(
+    d.vertices,
+    d.triangles,
+    d.lines,
+    d.texCoords,
+    d.normals,
+    d.tangents,
+  );
+  if (spaceball) spaceball.setRotationCenter(d.centerOfMass);
+}
 
-    let translateRightEye = m4. translation(-stereoCam.eyeSeparation/2, 0, 0);
+function draw() {
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    matAccum0 = m4.multiply(rotateToPointZero, modelView );
-    matAccum1 = m4.multiply(translateRightEye, matAccum0 );
-    matAccum2 = m4.multiply(translateToPointZero, matAccum1 );
+  updateWebcamTexture();
 
-    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matAccum2 );
+  lightAngle += 0.02;
+  let lightRadius = 10.0;
+  let lightWorldPos = [
+    Math.cos(lightAngle) * lightRadius,
+    Math.sin(lightAngle) * lightRadius,
+    -10.0,
+  ];
 
-    gl.colorMask(false, true, true, true);
-    gl.uniform4fv(shProgram.iColor, [1,1,1,1] );
-    surface.Draw();
+  let eyeSep = parseFloat(
+    document.getElementById("eyeSeparation")?.value || 0.7,
+  );
+  let fov = parseFloat(document.getElementById("fov")?.value || 45.0);
+  let nearClip = parseFloat(document.getElementById("nearClip")?.value || 10.0);
+  let conv = parseFloat(
+    document.getElementById("convergence")?.value || 2000.0,
+  );
+  let aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
 
+  stereoCam = new StereoCamera(conv, eyeSep, aspect, fov, nearClip, 20000.0);
+
+  let modelView = spaceball.getViewMatrix();
+  let rotateToVertical = m4.axisRotation([1, 0, 0], Math.PI / 2);
+  modelView = m4.multiply(rotateToVertical, modelView);
+
+  let rotateToPointZero = m4.axisRotation([0.707, 0.707, 0], 0.7);
+  let translateToPointZero = m4.translation(0, 0, -zoom);
+  modelView = m4.multiply(
+    translateToPointZero,
+    m4.multiply(rotateToPointZero, modelView),
+  );
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+  gl.uniform1i(shProgram.iVideoTex, 0);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, texDiffuse);
+  gl.uniform1i(shProgram.iDiffuseMap, 1);
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, texSpecular);
+  gl.uniform1i(shProgram.iSpecularMap, 2);
+  gl.activeTexture(gl.TEXTURE3);
+  gl.bindTexture(gl.TEXTURE_2D, texNormal);
+  gl.uniform1i(shProgram.iNormalMap, 3);
+
+  gl.uniform1i(
+    shProgram.iUseDiffuse,
+    document.getElementById("useDiffuseMap")?.checked ? 1 : 0,
+  );
+  gl.uniform1i(
+    shProgram.iUseSpecular,
+    document.getElementById("useSpecularMap")?.checked ? 1 : 0,
+  );
+  gl.uniform1i(
+    shProgram.iUseNormal,
+    document.getElementById("useNormalMap")?.checked ? 1 : 0,
+  );
+
+  // Відео фон
+  let showWebcamBg = document.getElementById("showWebcamBg")?.checked;
+  if (isCameraStarted && showWebcamBg) {
     gl.colorMask(true, true, true, true);
-}
+    gl.disable(gl.DEPTH_TEST);
+    gl.uniform1i(shProgram.iIsVideo, 1);
+    videoPlane.DrawTriangles();
+    gl.enable(gl.DEPTH_TEST);
+    gl.uniform1i(shProgram.iIsVideo, 0);
+  }
 
+  function DrawEye(projMatrix, translateMatrix) {
+    let eyeModelView = m4.multiply(translateMatrix, modelView);
+    let eyeMVP = m4.multiply(projMatrix, eyeModelView);
+    let eyeNormalMat = m4.transpose(m4.inverse(eyeModelView));
+    let lightViewPos = m4.transformPoint(eyeModelView, lightWorldPos);
 
+    // Малюємо світло
+    // let lightTransMat = m4.translation(
+    //   lightWorldPos[0],
+    //   lightWorldPos[1],
+    //   lightWorldPos[2],
+    // );
+    // let lightObjMV = m4.multiply(eyeModelView, lightTransMat);
+    // let lightObjMVP = m4.multiply(projMatrix, lightObjMV);
+    // gl.uniformMatrix4fv(
+    //   shProgram.iModelViewProjectionMatrix,
+    //   false,
+    //   lightObjMVP,
+    // );
+    // gl.uniform1i(shProgram.iIsSolidColor, 1);
+    // gl.uniform4fv(shProgram.iColor, [1.0, 1.0, 0.6, 1.0]);
+    // lightSphere.DrawTriangles();
 
-/* Initialize the WebGL context. Called from init() */
-function initGL() {
-    let prog = createProgram( gl, vertexShaderSource, fragmentShaderSource );
-
-    shProgram = new ShaderProgram('Basic', prog);
-    shProgram.Use();
-
-    shProgram.iAttribVertex              = gl.getAttribLocation(prog, "vertex");
-    shProgram.iModelViewMatrix           = gl.getUniformLocation(prog, "ModelViewMatrix");
-    shProgram.iProjectionMatrix          = gl.getUniformLocation(prog, "ProjectionMatrix");
-    shProgram.iColor                     = gl.getUniformLocation(prog, "color");
-
-    let data = {};
-    
-    CreateSurfaceData(data)
-
-    surface = new Model('Surface');
-    surface.BufferData(data.verticesF32, data.indicesU16);
-
-    stereoCam = new StereoCamera(
-        .7,     // decimeters
-        14.0,   // decimeters
-        1.3,    // aspect ratio of canvas
-        0.4,    // radians
-        8.0,    // decimeters
-        20.0    // decimeters
+    // Малюємо об'єкт
+    gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, eyeMVP);
+    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, eyeModelView);
+    gl.uniformMatrix4fv(shProgram.iNormalMatrix, false, eyeNormalMat);
+    gl.uniform3f(
+      shProgram.iLightPos,
+      lightViewPos[0],
+      lightViewPos[1],
+      lightViewPos[2],
     );
 
-    gl.enable(gl.DEPTH_TEST);
+    gl.uniform1i(shProgram.iIsSolidColor, 0);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(1.0, 1.0);
+    surface.DrawTriangles();
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+
+    gl.uniform1i(shProgram.iIsSolidColor, 1);
+    gl.uniform4fv(shProgram.iColor, [0.5, 0.5, 0.5, 0.5]);
+    surface.DrawLines();
+  }
+
+  gl.colorMask(true, false, false, false);
+  DrawEye(stereoCam.calcLeftFrustum(), m4.translation(eyeSep / 2, 0, 0));
+
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.colorMask(false, true, true, false);
+  DrawEye(stereoCam.calcRightFrustum(), m4.translation(-eyeSep / 2, 0, 0));
+
+  gl.colorMask(true, true, true, true);
+  requestAnimationFrame(draw);
 }
 
+function initGL() {
+  let prog = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+  shProgram = new ShaderProgram("PBR", prog);
+  shProgram.Use();
 
-/* Creates a program for use in the WebGL context gl, and returns the
- * identifier for that program.  If an error occurs while compiling or
- * linking the program, an exception of type Error is thrown.  The error
- * string contains the compilation or linking error.  If no error occurs,
- * the program identifier is the return value of the function.
- * The second and third parameters are strings that contain the
- * source code for the vertex shader and for the fragment shader.
- */
+  shProgram.iAttribVertex = gl.getAttribLocation(prog, "vertex");
+  shProgram.iAttribTexCoord = gl.getAttribLocation(prog, "texCoord");
+  shProgram.iAttribNormal = gl.getAttribLocation(prog, "normal");
+  shProgram.iAttribTangent = gl.getAttribLocation(prog, "tangent");
+
+  shProgram.iModelViewProjectionMatrix = gl.getUniformLocation(
+    prog,
+    "ModelViewProjectionMatrix",
+  );
+  shProgram.iModelViewMatrix = gl.getUniformLocation(prog, "ModelViewMatrix");
+  shProgram.iNormalMatrix = gl.getUniformLocation(prog, "NormalMatrix");
+  shProgram.iLightPos = gl.getUniformLocation(prog, "u_lightPos");
+
+  shProgram.iColor = gl.getUniformLocation(prog, "color");
+  shProgram.iIsVideo = gl.getUniformLocation(prog, "u_isVideo");
+  shProgram.iIsSolidColor = gl.getUniformLocation(prog, "u_isSolidColor");
+
+  shProgram.iVideoTex = gl.getUniformLocation(prog, "u_videoTex");
+  shProgram.iDiffuseMap = gl.getUniformLocation(prog, "u_diffuseMap");
+  shProgram.iSpecularMap = gl.getUniformLocation(prog, "u_specularMap");
+  shProgram.iNormalMap = gl.getUniformLocation(prog, "u_normalMap");
+
+  shProgram.iUseDiffuse = gl.getUniformLocation(prog, "u_useDiffuse");
+  shProgram.iUseSpecular = gl.getUniformLocation(prog, "u_useSpecular");
+  shProgram.iUseNormal = gl.getUniformLocation(prog, "u_useNormal");
+
+  texDiffuse = loadTexture(
+    "./texture/Alien_Muscle_001_DIFFUSE.jpg",
+    [200, 200, 200, 255],
+  );
+  texNormal = loadTexture(
+    "./texture/Alien_Muscle_001_NORM.jpg",
+    [128, 128, 255, 255],
+  );
+  texSpecular = loadTexture(
+    "./texture/Alien_Muscle_001_SPEC.jpg",
+    [128, 128, 128, 255],
+  );
+
+  surface = new Model("Surface");
+  updateSurface();
+
+  videoPlane = new Model("VideoPlane");
+  let vData = CreateVideoPlaneData();
+  videoPlane.BufferData(
+    vData.vertices,
+    vData.triangles,
+    null,
+    vData.texCoords,
+    null,
+    null,
+  );
+
+  lightSphere = new Model("LightSphere");
+  let sData = CreateSphereData(0.5, 16, 16);
+  lightSphere.BufferData(
+    sData.vertices,
+    sData.triangles,
+    null,
+    null,
+    null,
+    null,
+  );
+
+  gl.enable(gl.DEPTH_TEST);
+}
+
 function createProgram(gl, vShader, fShader) {
-    let vsh = gl.createShader( gl.VERTEX_SHADER );
-    gl.shaderSource(vsh,vShader);
-    gl.compileShader(vsh);
-    if ( ! gl.getShaderParameter(vsh, gl.COMPILE_STATUS) ) {
-        throw new Error("Error in vertex shader:  " + gl.getShaderInfoLog(vsh));
-     }
-    let fsh = gl.createShader( gl.FRAGMENT_SHADER );
-    gl.shaderSource(fsh, fShader);
-    gl.compileShader(fsh);
-    if ( ! gl.getShaderParameter(fsh, gl.COMPILE_STATUS) ) {
-       throw new Error("Error in fragment shader:  " + gl.getShaderInfoLog(fsh));
-    }
-    let prog = gl.createProgram();
-    gl.attachShader(prog,vsh);
-    gl.attachShader(prog, fsh);
-    gl.linkProgram(prog);
-    if ( ! gl.getProgramParameter( prog, gl.LINK_STATUS) ) {
-       throw new Error("Link error in program:  " + gl.getProgramInfoLog(prog));
-    }
-    return prog;
+  let vsh = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vsh, vShader);
+  gl.compileShader(vsh);
+  if (!gl.getShaderParameter(vsh, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(vsh));
+
+  let fsh = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fsh, fShader);
+  gl.compileShader(fsh);
+  if (!gl.getShaderParameter(fsh, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(fsh));
+
+  let prog = gl.createProgram();
+  gl.attachShader(prog, vsh);
+  gl.attachShader(prog, fsh);
+  gl.linkProgram(prog);
+  return prog;
 }
 
+function resizeCanvasToDisplaySize(canvas) {
+  const displayWidth = canvas.clientWidth * window.devicePixelRatio;
+  const displayHeight = canvas.clientHeight * window.devicePixelRatio;
+  if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+    canvas.width = displayWidth;
+    canvas.height = displayHeight;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+}
 
-/**
- * initialization function that will be called when the page has loaded
- */
 function init() {
-    let canvas;
-    try {
-        canvas = document.getElementById("webglcanvas");
-        gl = canvas.getContext("webgl");
-        if ( ! gl ) {
-            throw "Browser does not support WebGL";
-        }
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not get a WebGL graphics context.</p>";
-        return;
-    }
-    try {
-        initGL();  // initialize the WebGL graphics context
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not initialize the WebGL graphics context: " + e + "</p>";
-        return;
-    }
+  let canvas = document.getElementById("webglcanvas");
+  gl = canvas.getContext("webgl");
+  if (!gl) {
+    alert("WebGL not supported");
+    return;
+  }
 
-    spaceball = new TrackballRotator(canvas, draw, 0);
+  document.getElementById("rVal")?.addEventListener("input", updateSurface);
+  document.getElementById("cVal")?.addEventListener("input", updateSurface);
+  document.getElementById("dVal")?.addEventListener("input", updateSurface);
+  document
+    .getElementById("theta0Val")
+    ?.addEventListener("input", updateSurface);
+  document
+    .getElementById("btnStartCamera")
+    ?.addEventListener("click", startWebcam);
 
-    draw();
+  initGL();
+
+  spaceball = new TrackballRotator(canvas, null, 0);
+
+  canvas.addEventListener("wheel", (event) => {
+    zoom += event.deltaY * 0.02;
+    if (zoom < 4) zoom = 4;
+    if (zoom > 150) zoom = 150;
+    event.preventDefault();
+  });
+
+  resizeCanvasToDisplaySize(canvas);
+  requestAnimationFrame(draw);
 }
+
+window.addEventListener("resize", function () {
+  let canvas = document.getElementById("webglcanvas");
+  resizeCanvasToDisplaySize(canvas);
+});

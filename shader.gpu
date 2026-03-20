@@ -1,15 +1,40 @@
-
-
 // Vertex shader
 const vertexShaderSource = `
 attribute vec3 vertex;
+attribute vec2 texCoord;
+attribute vec3 normal;
+attribute vec3 tangent;
+
+varying vec2 v_texCoord;
+varying vec3 v_normal;
+varying vec3 v_tangent;
+varying vec3 v_eyeVec;
+varying vec3 v_lightDir;
+
+uniform mat4 ModelViewProjectionMatrix;
 uniform mat4 ModelViewMatrix;
-uniform mat4 ProjectionMatrix;
+uniform mat4 NormalMatrix;
+uniform vec3 u_lightPos;
+uniform bool u_isVideo;
 
 void main() {
-    gl_Position = ProjectionMatrix * ModelViewMatrix * vec4(vertex, 1.0);
-}`;
+    if (u_isVideo) {
+        gl_Position = vec4(vertex, 1.0);
+        v_texCoord = texCoord;
+    } else {
+        gl_Position = ModelViewProjectionMatrix * vec4(vertex, 1.0);
+        v_texCoord = texCoord;
 
+        vec4 vertPos4 = ModelViewMatrix * vec4(vertex, 1.0);
+        vec3 vertPos = vertPos4.xyz / vertPos4.w;
+
+        v_normal = normalize(mat3(NormalMatrix) * normal);
+        v_tangent = normalize(mat3(NormalMatrix) * tangent);
+
+        v_eyeVec = -vertPos;
+        v_lightDir = u_lightPos - vertPos; 
+    }
+}`;
 
 // Fragment shader
 const fragmentShaderSource = `
@@ -19,7 +44,69 @@ const fragmentShaderSource = `
    precision mediump float;
 #endif
 
+varying vec2 v_texCoord;
+varying vec3 v_normal;
+varying vec3 v_tangent;
+varying vec3 v_eyeVec;
+varying vec3 v_lightDir;
+
+uniform sampler2D u_videoTex;
+uniform sampler2D u_diffuseMap;
+uniform sampler2D u_specularMap;
+uniform sampler2D u_normalMap;
+
+uniform bool u_isVideo;
+uniform bool u_isSolidColor;
+
+uniform bool u_useDiffuse;
+uniform bool u_useSpecular;
+uniform bool u_useNormal;
 uniform vec4 color;
+
 void main() {
-    gl_FragColor = color;
+    if (u_isVideo) {
+        gl_FragColor = texture2D(u_videoTex, v_texCoord);
+        return;
+    }
+
+    if (u_isSolidColor) {
+        gl_FragColor = color; 
+        return;
+    }
+
+    vec3 N = normalize(v_normal);
+    vec3 T = normalize(v_tangent);
+    T = normalize(T - dot(T, N) * N);
+    vec3 B = cross(N, T);
+    mat3 TBN = mat3(T, B, N);
+
+    vec3 finalNormal = N;
+    if (u_useNormal) {
+        vec3 normalMap = texture2D(u_normalMap, v_texCoord).rgb;
+        normalMap = normalMap * 2.0 - 1.0;
+        if (length(normalMap) > 0.1) {
+            finalNormal = normalize(TBN * normalMap);
+        }
+    }
+
+    vec3 baseColor = vec3(0.4, 0.7, 1.0);
+    if (u_useDiffuse) {
+        baseColor = texture2D(u_diffuseMap, v_texCoord).rgb;
+    }
+
+    float specStrength = 0.5;
+    if (u_useSpecular) {
+        specStrength = texture2D(u_specularMap, v_texCoord).r * 1.5;
+    }
+
+    vec3 L = normalize(v_lightDir);
+    vec3 V = normalize(v_eyeVec);
+    vec3 R = reflect(-L, finalNormal);
+
+    float ambient = 0.2;
+    float diffuse = max(dot(finalNormal, L), 0.0);
+    float specular = pow(max(dot(R, V), 0.0), 32.0) * specStrength * diffuse;
+
+    vec3 finalColor = baseColor * (ambient + diffuse) + vec3(1.0) * specular;
+    gl_FragColor = vec4(finalColor, 1.0);
 }`;
