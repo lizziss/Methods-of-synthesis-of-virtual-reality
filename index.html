@@ -95,8 +95,13 @@
       .webcam-group {
         display: flex;
         align-items: center;
-        justify-content:;
         gap: 20px;
+      }
+      .phone-group {
+        display: flex;
+        flex-direction: column;
+        align-items: start;
+        gap: 10px;
       }
     </style>
   </head>
@@ -116,6 +121,14 @@
             Show Webcam Background
           </label>
           <button id="btnStartCamera">Start Web Camera</button>
+        </div>
+        <div class="phone-group">
+          <div>
+            <label for="phoneIpInput">IP телефона (з Sensor Server):</label>
+            <input type="text" id="phoneIpInput" placeholder="192.168.0.100" />
+          </div>
+
+          <button onclick="startTUIConnection()">Connect Phone Sensor</button>
         </div>
         <hr />
         <h2>Monge Surface</h2>

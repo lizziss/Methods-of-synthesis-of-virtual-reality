@@ -12,6 +12,104 @@ let videoElement, videoTexture;
 let texDiffuse, texSpecular, texNormal;
 let isCameraStarted = false;
 
+
+let phoneRotationMatrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+let sensorWebSocket = null;
+
+function getRotationMatrixFromVector(rv) {
+  let q1 = rv[0]; // x
+  let q2 = rv[1]; // y
+  let q3 = rv[2]; // z
+  let q0 = rv.length >= 4 ? rv[3] : 0; // w
+
+  if (rv.length < 4) {
+    q0 = 1 - q1 * q1 - q2 * q2 - q3 * q3;
+    q0 = q0 > 0 ? Math.sqrt(q0) : 0;
+  }
+
+  let sq_q1 = 2 * q1 * q1;
+  let sq_q2 = 2 * q2 * q2;
+  let sq_q3 = 2 * q3 * q3;
+  let q1_q2 = 2 * q1 * q2;
+  let q3_q0 = 2 * q3 * q0;
+  let q1_q3 = 2 * q1 * q3;
+  let q2_q0 = 2 * q2 * q0;
+  let q2_q3 = 2 * q2 * q3;
+  let q1_q0 = 2 * q1 * q0;
+
+  return [
+    1 - sq_q2 - sq_q3,
+    q1_q2 + q3_q0,
+    q1_q3 - q2_q0,
+    0,
+    q1_q2 - q3_q0,
+    1 - sq_q1 - sq_q3,
+    q2_q3 + q1_q0,
+    0,
+    q1_q3 + q2_q0,
+    q2_q3 - q1_q0,
+    1 - sq_q1 - sq_q2,
+    0,
+    0,
+    0,
+    0,
+    1,
+  ];
+}
+
+function connectSensorServer(ipAddress) {
+  if (sensorWebSocket) {
+    sensorWebSocket.close();
+  }
+
+  let cleanIp = ipAddress.split(':')[0];
+  const finalUrl = `ws://${cleanIp}:8080/sensor/connect?type=android.sensor.game_rotation_vector`;
+  
+  sensorWebSocket = new WebSocket(finalUrl);
+
+  sensorWebSocket.onopen = () => {
+    console.log("Успішно підключено до сенсора game_rotation_vector!");
+  };
+
+  sensorWebSocket.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+
+      if (data && data.values && Array.isArray(data.values)) {
+        let qx = data.values[0];
+        let qy = data.values[1];
+        let qz = data.values[2];
+        let qw = data.values[3];
+
+        let remappedValues = [qx, qz, -qy, qw];
+
+        let rawMatrix = getRotationMatrixFromVector(remappedValues);
+
+        let compensationMatrix = m4.xRotation(-Math.PI / 2); 
+
+        phoneRotationMatrix = m4.multiply(compensationMatrix, rawMatrix);
+      }
+    } catch (e) {
+      console.error("Помилка обробки:", e);
+    }
+  };
+
+  sensorWebSocket.onerror = (err) => {
+    console.error("Помилка WebSocket:", err);
+  };
+}
+
+window.startTUIConnection = function () {
+  const ip = document.getElementById("phoneIpInput").value;
+  if (ip) {
+    connectSensorServer(ip);
+  } else {
+    alert("Будь ласка, введіть IP адресу з додатку Sensor Server.");
+  }
+};
+
+
 function deg2rad(angle) {
   return (angle * Math.PI) / 180;
 }
@@ -148,6 +246,8 @@ function draw() {
   let modelView = spaceball.getViewMatrix();
   let rotateToVertical = m4.axisRotation([1, 0, 0], Math.PI / 2);
   modelView = m4.multiply(rotateToVertical, modelView);
+
+  modelView = m4.multiply(modelView, phoneRotationMatrix);
 
   let rotateToPointZero = m4.axisRotation([0.707, 0.707, 0], 0.7);
   let translateToPointZero = m4.translation(0, 0, -zoom);
