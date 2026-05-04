@@ -1,300 +1,107 @@
 <!doctype html>
-<html lang="en">
+<html>
   <head>
-    <meta charset="UTF-8" />
-    <title>Monge Surface Visualization</title>
+    <meta charset="utf-8" />
+    <title>Monge Surface AR</title>
+    <!-- Підключаємо бібліотеки A-Frame та AR.js -->
+    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
-    <style>
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-        height: 100%;
-        overflow: hidden;
-        font-family: "Segoe UI", Arial, sans-serif;
-        background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-        color: #333;
-      }
-      #container {
-        display: flex;
-        height: 100vh;
-        width: 100vw;
-      }
-      #controls {
-        width: 320px;
-        background: rgba(255, 255, 255, 0.95);
-        padding: 20px;
-        box-shadow: 4px 0 10px rgba(0, 0, 0, 0.2);
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        z-index: 10;
-        overflow-y: auto;
-      }
-      h2,
-      h3 {
-        text-align: center;
-        margin: 0;
-        color: #1565c0;
-        font-weight: 600;
-      }
-      label {
-        display: inline-block;
-        width: 90px;
-        font-weight: 500;
-        font-size: 14px;
-      }
-      input[type="number"] {
-        width: 80px;
-        padding: 5px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-      }
-      input[type="range"] {
-        width: 140px;
-        vertical-align: middle;
-      }
-      button {
-        background-color: #1565c0;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        padding: 10px;
-        cursor: pointer;
-        transition: background 0.3s;
-        font-weight: bold;
-      }
-      button:hover {
-        background-color: #0d47a1;
-      }
-      #canvas-holder {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background-color: #000;
-      }
-      canvas {
-        width: 100%;
-        height: 100%;
-        display: block;
-      }
-      .texture-group label {
-        width: auto;
-        display: block;
-        margin-bottom: 5px;
-        cursor: pointer;
-      }
-      hr {
-        border: 0;
-        height: 1px;
-        background: #ccc;
-        margin: 10px 0;
-        width: 100%;
-      }
-      .webcam-group {
-        display: flex;
-        align-items: center;
-        gap: 20px;
-      }
-      .phone-group {
-        display: flex;
-        flex-direction: column;
-        align-items: start;
-        gap: 10px;
-      }
-    </style>
+    <script>
+      // Компонент для генерації вашої фігури Монжа
+      AFRAME.registerComponent("monge-surface", {
+        init: function () {
+          let geometry = new THREE.BufferGeometry();
+          let vertices = [];
+          let indices = [];
+
+          // Параметри фігури
+          let r = 1.3,
+            c = 1.7,
+            d = 1.6,
+            theta0 = 1.57;
+          let uSteps = 88,
+            vSteps = 58;
+          let uMax = 2.4 * Math.PI,
+            vMin = -2 * Math.PI,
+            vMax = 2 * Math.PI;
+
+          function P(u, v) {
+            let x =
+              r * Math.cos(u) -
+              (r * (theta0 - u) +
+                v * Math.cos(theta0) -
+                c * Math.sin(d * v) * Math.sin(theta0)) *
+                Math.sin(u);
+            let y =
+              r * Math.sin(u) +
+              (r * (theta0 - u) +
+                v * Math.cos(theta0) -
+                c * Math.sin(d * v) * Math.sin(theta0)) *
+                Math.cos(u);
+            let z =
+              v * Math.sin(theta0) + c * Math.sin(d * v) * Math.cos(theta0);
+            return [x, y, z];
+          }
+
+          // Генерація точок
+          for (let i = 0; i <= uSteps; i++) {
+            let u = (i * uMax) / uSteps;
+            for (let j = 0; j <= vSteps; j++) {
+              let v = vMin + (j * (vMax - vMin)) / vSteps;
+              let p = P(u, v);
+              // Зменшуємо координати, щоб фігура помістилася на екрані
+              vertices.push(p[0] / 5, p[1] / 5, p[2] / 5);
+            }
+          }
+
+          // Генерація полігонів
+          for (let i = 0; i < uSteps; i++) {
+            for (let j = 0; j < vSteps; j++) {
+              let p00 = i * (vSteps + 1) + j;
+              let p01 = p00 + 1;
+              let p10 = (i + 1) * (vSteps + 1) + j;
+              let p11 = p10 + 1;
+              indices.push(p00, p01, p10);
+              indices.push(p01, p11, p10);
+            }
+          }
+
+          geometry.setAttribute(
+            "position",
+            new THREE.Float32BufferAttribute(vertices, 3),
+          );
+          geometry.setIndex(indices);
+          geometry.computeVertexNormals();
+
+          let material = new THREE.MeshNormalMaterial({
+            wireframe: true,
+            side: THREE.DoubleSide,
+          });
+
+          let mesh = new THREE.Mesh(geometry, material);
+          this.el.setObject3D("mesh", mesh);
+        },
+      });
+    </script>
   </head>
-  <body onload="init()">
-    <div id="container">
-      <div id="canvas-holder">
-        <canvas id="webglcanvas"></canvas>
-      </div>
 
-      <video id="webcam" autoplay playsinline style="display: none"></video>
+  <body style="margin: 0px; overflow: hidden">
+    <!-- Сцена AR.js -->
+    <a-scene
+      embedded
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+    >
+      <a-marker type="pattern" url="src/marker.patt">
+        <a-entity
+          monge-surface
+          scale="0.2 0.2 0.2"
+          rotation="-90 0 0"
+          position="0 0.5 0"
+        ></a-entity>
+      </a-marker>
 
-      <div id="controls">
-        <h3>Webcam Control</h3>
-        <div class="webcam-group">
-          <label>
-            <input type="checkbox" id="showWebcamBg" checked disabled />
-            Show Webcam Background
-          </label>
-          <button id="btnStartCamera">Start Web Camera</button>
-        </div>
-        <div class="phone-group">
-          <div>
-            <label for="phoneIpInput">IP телефона (з Sensor Server):</label>
-            <input type="text" id="phoneIpInput" placeholder="192.168.0.100" />
-          </div>
-
-          <button onclick="startTUIConnection()">Connect Phone Sensor</button>
-        </div>
-        <hr />
-        <h2>Monge Surface</h2>
-        <div>
-          <label>r (m):</label
-          ><input
-            type="number"
-            id="rVal"
-            value="1"
-            step="0.1"
-            oninput="updateSurface()"
-          />
-        </div>
-        <div>
-          <label>c (m):</label
-          ><input
-            type="number"
-            id="cVal"
-            value="1"
-            step="0.1"
-            oninput="updateSurface()"
-          />
-        </div>
-        <div>
-          <label>d:</label
-          ><input
-            type="number"
-            id="dVal"
-            value="1"
-            step="0.1"
-            oninput="updateSurface()"
-          />
-        </div>
-        <div>
-          <label>θ₀ (π):</label
-          ><input
-            type="number"
-            id="theta0Val"
-            value="1.57"
-            step="0.1"
-            oninput="updateSurface()"
-          />
-        </div>
-        <div>
-          <label>uMax:</label>
-          <input
-            type="range"
-            id="uMaxRange"
-            min="1"
-            max="5"
-            step="0.1"
-            value="2.4"
-            oninput="updateUmax(this.value)"
-          />
-          <span id="uMaxValue">2.4π</span>
-        </div>
-        <div>
-          <label>U Steps:</label>
-          <input
-            type="range"
-            id="uSlider"
-            min="3"
-            max="150"
-            value="100"
-            oninput="updateUSteps(this.value)"
-          />
-          <span id="uSliderValue">100</span>
-        </div>
-        <div>
-          <label>V Steps:</label>
-          <input
-            type="range"
-            id="vSlider"
-            min="3"
-            max="100"
-            value="20"
-            oninput="updateVSteps(this.value)"
-          />
-          <span id="vSliderValue">20</span>
-        </div>
-
-        <hr />
-        <h3>Stereo Camera</h3>
-        <div>
-          <label>Eye Sep:</label
-          ><input
-            type="range"
-            id="eyeSeparation"
-            min="0"
-            max="2"
-            step="0.01"
-            value="0.2"
-            oninput="
-              document.getElementById('eyeSepVal').innerText = this.value
-            "
-          /><span id="eyeSepVal">0.2</span>
-        </div>
-        <div>
-          <label>FOV:</label
-          ><input
-            type="range"
-            id="fov"
-            min="10"
-            max="120"
-            step="1"
-            value="45"
-            oninput="document.getElementById('fovVal').innerText = this.value"
-          /><span id="fovVal">45</span>
-        </div>
-        <div>
-          <label>Near Clip:</label
-          ><input
-            type="range"
-            id="nearClip"
-            min="0.01"
-            max="5"
-            step="0.01"
-            value="0.1"
-            oninput="
-              document.getElementById('nearClipVal').innerText = this.value
-            "
-          /><span id="nearClipVal">0.1</span>
-        </div>
-        <div>
-          <label>Convergence:</label
-          ><input
-            type="range"
-            id="convergence"
-            min="1"
-            max="50"
-            step="0.5"
-            value="10"
-            oninput="document.getElementById('convVal').innerText = this.value"
-          /><span id="convVal">2000</span>
-        </div>
-
-        <hr />
-        <div>
-          <label>Texture:</label>
-          <div class="texture-group">
-            <label
-              ><input type="checkbox" id="useDiffuseMap" checked /> Use Diffuse
-              Map</label
-            >
-            <label
-              ><input type="checkbox" id="useSpecularMap" checked /> Use
-              Specular Map</label
-            >
-            <label
-              ><input type="checkbox" id="useNormalMap" checked /> Use Normal
-              Map</label
-            >
-          </div>
-        </div>
-        <button onclick="updateSurface()">Update Surface</button>
-      </div>
-    </div>
-
-    <script src="./Utils/trackball-rotator.js"></script>
-    <script src="./Utils/m4.js"></script>
-    <script src="./shader.gpu"></script>
-    <script src="./StereoCamera.js"></script>
-
-    <script src="./Model.js"></script>
-    <script src="./Geometry.js"></script>
-
-    <script src="./main.js"></script>
+      <a-entity camera></a-entity>
+    </a-scene>
   </body>
 </html>
